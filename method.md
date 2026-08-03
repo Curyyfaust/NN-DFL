@@ -42,7 +42,7 @@ y_i-\widehat{\ell}_i\\
 \tag{3}
 $$
 
-在离线 SOC-ICNN 数据集中，区间满足
+在离线 QICNN 数据集中，区间满足
 \(0\leq\ell_i\leq y_i\leq u_i\leq P^{\max}\)。端到端训练时，为避免预测初期的越界
 造成负裕度，代码中采用
 
@@ -59,24 +59,41 @@ $$
 真实值经缩放后作为条件变量，即
 \(\boldsymbol{c}_i=y_i/s_c\)，当前实现取 \(s_c=2\)。
 
-## B. Conditional SOC-ICNN Surrogate
+## B. Conditional QICNN Surrogate
 
 为避免在每次梯度更新时重复求解 IEEE 33 节点二阶锥最优潮流，本文构造条件
-SOC-ICNN \(V_{\boldsymbol{\phi}}(\boldsymbol{c},\boldsymbol{x})\)，逼近给定运行条件和
+QICNN \(V_{\boldsymbol{\phi}}(\boldsymbol{c},\boldsymbol{x})\)，逼近给定运行条件和
 区间决策下的最优总成本。对固定条件 \(\boldsymbol{c}\)，该代理函数关于
 \(\boldsymbol{x}\) 保持凸性。其总体形式为
 
 $$
 V_{\boldsymbol{\phi}}(\boldsymbol{c},\boldsymbol{x})
 =V_{\mathrm{ICNN}}(\boldsymbol{c},\boldsymbol{x})
-+V_{\mathrm{quad}}(\boldsymbol{c},\boldsymbol{x})
-+V_{\mathrm{soc}}(\boldsymbol{c},\boldsymbol{x}).
++V_{\mathrm{quad}}(\boldsymbol{c},\boldsymbol{x}).
 \tag{5}
 $$
 
-条件网络 \(h_{\boldsymbol{\phi}}(\boldsymbol{c})\) 为各支路生成样本相关参数。该网络
-可对条件变量采用任意非线性映射，因为所要求的凸性仅针对固定
-\(\boldsymbol{c}\) 时的决策变量 \(\boldsymbol{x}\)。
+条件网络 \(h_{\boldsymbol{\phi}}(\boldsymbol{c})\) 是一个超网络。它先将运行条件映射为
+条件表示 \(\boldsymbol{h}=h_{\boldsymbol{\phi}}(\boldsymbol{c})\)，再通过两个参数头分别
+生成 ICNN 主干参数和二次支路参数：
+
+$$
+\boldsymbol{\Theta}_{\mathrm{I}}(\boldsymbol{c})
+=g_{\mathrm{I}}(\boldsymbol{h})
+=\{\boldsymbol{W}_k^x,\boldsymbol{W}_k^z,\boldsymbol{b}_k,
+\boldsymbol{w}^x,\boldsymbol{w}^z,b^o\}(\boldsymbol{c}),
+$$
+
+$$
+\boldsymbol{\Theta}_{\mathrm{Q}}(\boldsymbol{c})
+=g_{\mathrm{Q}}(\boldsymbol{h})
+=\{\boldsymbol{B},\boldsymbol{e},\widetilde{\gamma}\}(\boldsymbol{c}).
+$$
+
+因此，条件变量 \(\boldsymbol{c}\) 的作用是为当前样本生成一组特定的凸函数参数，
+即选择与当前运行状态对应的成本曲面；决策变量 \(\boldsymbol{x}\) 则是在该曲面上
+进行评价的变量。条件网络可对 \(\boldsymbol{c}\) 采用任意非线性映射，因为所要求的
+凸性仅针对固定 \(\boldsymbol{c}\) 时的 \(\boldsymbol{x}\)。
 
 ### 1) ICNN branch
 
@@ -151,24 +168,10 @@ $$
 
 故该支路为凸函数。
 
-### 3) Second-order-cone norm branches
+### 3) Convexity of QICNN
 
-SOC 支路由 \(G\) 个仿射映射的二范数组成：
-
-$$
-V_{\mathrm{soc}}
-=\sum_{g=1}^{G}\lambda_g(\boldsymbol{c})
-\left\|
-\boldsymbol{A}_g(\boldsymbol{c})\boldsymbol{x}
-+\boldsymbol{d}_g(\boldsymbol{c})
-\right\|_2,
-\qquad
-\lambda_g=\operatorname{softplus}(\widetilde{\lambda}_g)\geq0.
-\tag{12}
-$$
-
-二范数与仿射函数的复合是凸函数，且非负加权和保持凸性。因此，由式 (5)、
-(9)、(11) 和 (12) 可得
+ICNN 主干和半正定二次支路均关于 \(\boldsymbol{x}\) 为凸函数，二者之和仍保持凸性。
+因此，由式 (5)、(9) 和 (11) 可得
 
 $$
 V_{\boldsymbol{\phi}}
@@ -178,11 +181,11 @@ V_{\boldsymbol{\phi}}
 \rho V_{\boldsymbol{\phi}}(\boldsymbol{c},\boldsymbol{x}_1)
 +(1-\rho)V_{\boldsymbol{\phi}}(\boldsymbol{c},\boldsymbol{x}_2),
 \quad \rho\in[0,1].
-\tag{13}
+\tag{12}
 $$
 
-当前代码采用条件网络宽度 \((64,64)\)、ICNN 宽度 \((32,32,16)\)、秩为 4 的
-二次支路，以及 \(G=4\) 个维数为 4 的 SOC 支路。
+当前 QICNN 采用条件网络宽度 \((64,64)\)、ICNN 宽度 \((32,32,16)\)，以及秩为
+4 的半正定二次支路。
 
 ### 4) Cost normalization and surrogate fitting
 
@@ -194,20 +197,20 @@ $$
 \qquad
 \widehat{J}_i=
 s_JV_{\boldsymbol{\phi}}(\boldsymbol{c}_i,\boldsymbol{x}_i)+\mu_J.
-\tag{14}
+\tag{13}
 $$
 
-由于 \(s_J>0\)，反归一化不会改变凸性。SOC-ICNN 使用 Smooth-\(L_1\) 损失离线训练：
+由于 \(s_J>0\)，反归一化不会改变凸性。QICNN 使用 Smooth-\(L_1\) 损失离线训练：
 
 $$
 \min_{\boldsymbol{\phi}}\;
-\mathcal{L}_{\mathrm{SOC}}(\boldsymbol{\phi})
+\mathcal{L}_{\mathrm{QICNN}}(\boldsymbol{\phi})
 =\frac{1}{N}\sum_{i=1}^{N}
 \operatorname{Huber}_{1}
 \left(
 V_{\boldsymbol{\phi}}(\boldsymbol{c}_i,\boldsymbol{x}_i)-\bar{J}_i
 \right),
-\tag{15}
+\tag{14}
 $$
 
 其中
@@ -218,12 +221,12 @@ $$
 \frac{1}{2}r^2, & |r|<1,\\
 |r|-\frac{1}{2}, & |r|\geq1.
 \end{cases}
-\tag{16}
+\tag{15}
 $$
 
 ## C. Progressive Decision-Focused Training
 
-SOC-ICNN 训练完成后固定参数 \(\boldsymbol{\phi}\)，仅更新区间预测器参数
+QICNN 训练完成后固定参数 \(\boldsymbol{\phi}\)，仅更新区间预测器参数
 \(\boldsymbol{\theta}\)。该过程同时考虑统计预测质量与下游运行成本。
 
 ### 1) Prediction loss
@@ -233,7 +236,7 @@ SOC-ICNN 训练完成后固定参数 \(\boldsymbol{\phi}\)，仅更新区间预�
 $$
 \rho_{\tau}(e)=\max\{\tau e,(\tau-1)e\},
 \qquad e=y-\widehat{q}_{\tau}.
-\tag{17}
+\tag{16}
 $$
 
 上下界对应 \(\tau_l=0.05\) 和 \(\tau_u=0.95\)，因此 90% 区间的预测损失为
@@ -245,12 +248,12 @@ $$
 \rho_{\tau_l}(y_i-\widehat{\ell}_i)
 +\rho_{\tau_u}(y_i-\widehat{u}_i)
 \right].
-\tag{18}
+\tag{17}
 $$
 
 ### 2) Decision loss
 
-冻结的 SOC-ICNN 将预测区间映射为可微的运行成本代理：
+冻结的 QICNN 将预测区间映射为可微的运行成本代理：
 
 $$
 \mathcal{L}_{\mathrm{dec}}(\boldsymbol{\theta})
@@ -260,11 +263,11 @@ V_{\boldsymbol{\phi}}
 \frac{y_i}{s_c},
 \widetilde{\boldsymbol{x}}_i(\boldsymbol{\theta})
 \right),
-\tag{19}
+\tag{18}
 $$
 
 其中 \(\widetilde{\boldsymbol{x}}_i\) 由式 (4) 给出。虽然
-\(\boldsymbol{\phi}\) 被固定，梯度仍通过 SOC-ICNN 对区间端点反向传播：
+\(\boldsymbol{\phi}\) 被固定，梯度仍通过 QICNN 对区间端点反向传播：
 
 $$
 \nabla_{\boldsymbol{\theta}}\mathcal{L}_{\mathrm{dec}}
@@ -275,7 +278,7 @@ $$
 {\partial(\widehat{\ell},\widehat{u})}
 \frac{\partial(\widehat{\ell},\widehat{u})}
 {\partial\boldsymbol{\theta}}.
-\tag{20}
+\tag{19}
 $$
 
 ### 3) Progressive gradient fusion
@@ -288,7 +291,7 @@ $$
 \qquad
 \boldsymbol{g}_{d}=
 \nabla_{\boldsymbol{\theta}}\mathcal{L}_{\mathrm{dec}},
-\tag{21}
+\tag{20}
 $$
 
 并构造单位方向
@@ -299,7 +302,7 @@ $$
 \qquad
 \boldsymbol{u}_{d}=
 \frac{\boldsymbol{g}_{d}}{\|\boldsymbol{g}_{d}\|_2}.
-\tag{22}
+\tag{21}
 $$
 
 第 \(t\) 个 epoch 的预测梯度权重按 Sigmoid 型规律衰减：
@@ -308,7 +311,7 @@ $$
 \alpha_t=
 \left[1+\exp(t-c)\right]^{-\kappa},
 \qquad \kappa\geq0,
-\tag{23}
+\tag{22}
 $$
 
 其中，\(c\) 为转折 epoch，\(\kappa\) 控制转换陡峭程度。当前默认值为
@@ -322,10 +325,10 @@ $$
 }{
 \|\alpha_t\boldsymbol{u}_{p}+\boldsymbol{u}_{d}\|_2
 }.
-\tag{24}
+\tag{23}
 $$
 
-式 (24) 使用两梯度范数的几何平均值确定更新幅值，同时使用
+式 (23) 使用两梯度范数的几何平均值确定更新幅值，同时使用
 \(\alpha_t\boldsymbol{u}_{p}+\boldsymbol{u}_{d}\) 确定更新方向。在训练初期
 \(\alpha_t\approx1\)，预测梯度与决策梯度共同稳定区间学习；越过转折点后
 \(\alpha_t\rightarrow0\)，更新方向逐步转向下游决策目标。该策略实现了从
@@ -340,7 +343,7 @@ $$
 \min\left\{1,\frac{G_{\max}}
 {\|\boldsymbol{g}_t\|_2+\varepsilon}\right\},
 \qquad G_{\max}=5.
-\tag{25}
+\tag{24}
 $$
 
 模型参数由 AdamW 更新：
@@ -349,11 +352,11 @@ $$
 \boldsymbol{\theta}_{t+1}
 =\operatorname{AdamW}
 \left(\boldsymbol{\theta}_{t},\overline{\boldsymbol{g}}_t\right).
-\tag{26}
+\tag{25}
 $$
 
 默认初始学习率为 \(5\times10^{-4}\)，权重衰减为 \(10^{-5}\)。验证集仅采用式
-(18) 的分位数损失进行模型选择；当验证指标连续 40 个 epoch 未改善时提前停止，
+(17) 的分位数损失进行模型选择；当验证指标连续 40 个 epoch 未改善时提前停止，
 并恢复最佳参数。学习率则在验证损失连续 10 个 epoch 未改善时减半。
 
 ## D. Implementation Correspondence
@@ -364,9 +367,15 @@ $$
 |:---|:---|
 | 区间可行化映射，式 (1)--(2) | `model.py` 中的 `LSTMQuantileIntervalNetwork` |
 | 区间决策变量，式 (3)--(4) | `icnn.py::interval_to_decision` 与 `exp.py::soc_decision_loss` |
-| SOC-ICNN，式 (5)--(13) | `icnn.py::ConditionalSOCICNN` |
-| SOC-ICNN 归一化及离线拟合，式 (14)--(16) | `icnn.py` 与 `icnn_test.ipynb` |
-| 分位数及决策损失，式 (17)--(20) | `exp.py::interval_quantile_loss` 和 `soc_decision_loss` |
-| 渐进式梯度融合，式 (21)--(25) | `exp.py::prediction_decay` 和 `merged_gradient_step` |
-| 端到端优化及早停，式 (26) | `exp.py::train_end_to_end` |
+| QICNN 条件参数网络与凸支路，式 (5)--(12) | `icnn.py::ConditionalSOCICNN` 中的 condition network、ICNN 与 quadratic 部分 |
+| QICNN 归一化及离线拟合，式 (13)--(15) | `icnn.py` 与 `icnn_test.ipynb` |
+| 分位数及决策损失，式 (16)--(19) | `exp.py::interval_quantile_loss` 和 `soc_decision_loss` |
+| 渐进式梯度融合，式 (20)--(24) | `exp.py::prediction_decay` 和 `merged_gradient_step` |
+| 端到端优化及早停，式 (25) | `exp.py::train_end_to_end` |
 
+需要说明的是，当前代码中的 `ConditionalSOCICNN` 与 `soc_decision_loss` 是历史遗留
+标识符，其中 `ConditionalSOCICNN.forward` 目前仍计算 SOC 范数支路。本文所定义的
+QICNN 仅包含条件参数网络、ICNN 主干和半正定二次支路，不包含 SOC 范数支路；因此，
+正式复现实验时还需在实现中删除或禁用该支路并重新训练检查点。两个 QICNN 参数组可由
+同一个线性输出层拼接生成，并在 `_unpack` 中分别解析为
+\(\boldsymbol{\Theta}_{\mathrm{I}}\) 和 \(\boldsymbol{\Theta}_{\mathrm{Q}}\)。
